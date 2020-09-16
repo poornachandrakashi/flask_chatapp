@@ -1,3 +1,5 @@
 flask
 flask-socket.io
 eventlet
+
+mongodb+srv://test:poorna1999@cluster0.qqz3a.mongodb.net/test?retryWrites=true&w=majority

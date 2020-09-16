@@ -4,6 +4,7 @@ from flask_socketio import SocketIO, join_room
 from flask_login import LoginManager, login_user, logout_user,login_required,current_user
 from db import *
 from pymongo.errors import DuplicateKeyError
+from datetime import datetime
 
 
 app=Flask(__name__)
@@ -15,7 +16,10 @@ app.secret_key="poorna1999"
 
 @app.route('/')
 def home():
-    return render_template('home.html')
+    rooms=[]
+    if current_user.is_authenticated:
+        rooms=get_rooms_for_user(current_user.username)
+    return render_template('home.html',rooms=rooms)
 
 @app.route('/signup',methods=['GET','POST'])
 def signup():
@@ -70,26 +74,56 @@ def create_room():
             if current_user.username in usernames:
                 usernames.remove(current_user.username)
             add_room_member(room_id,room_name,usernames,current_user.username)
-            
+            return redirect(url_for('view_room'),room_id=room_id) 
         else:
             message = "Failed to create a room"
                 
     return render_template('create_room.html')
 
-@app.route('/chat')
-def chat():
-    username=request.args.get('username')
-    room=request.args.get('room')
-    
-    if username and room:
-        return render_template('chat.html',username=username,room=room)
+
+@app.route('/rooms/<room_id>/edit',methods=['GET','POST'])
+@login_required
+def edit_room(room_id):
+    room = get_room(room_id)
+    if room and is_room_admin(room_id, current_user.username):
+        existing_room_members = [member['_id']['username'] for member in get_room_members(room_id)]
+        room_members_str = ",".join(existing_room_members)
+        message = ''
+        if request.method == 'POST':
+            room_name = request.form.get('room_name')
+            room['name'] = room_name
+            update_room(room_id, room_name)
+
+            new_members = [username.strip() for username in request.form.get('members').split(',')]
+            members_to_add = list(set(new_members) - set(existing_room_members))
+            members_to_remove = list(set(existing_room_members) - set(new_members))
+            if len(members_to_add):
+                add_room_members(room_id, room_name, members_to_add, current_user.username)
+            if len(members_to_remove):
+                remove_room_members(room_id, members_to_remove)
+            message = 'Room edited successfully'
+            room_members_str = ",".join(new_members)
+        return render_template('edit_room.html', room=room, room_members_str=room_members_str, message=message)
     else:
-        redirect(url_for('home'))
+        return "Room not found", 404
+
+@app.route('/rooms/<room_id>/')
+def view_room(room_id):
+    room = get_room(room_id)
+    if room and is_room_member(room_id, current_user.username):
+        room_members = get_room_members(room_id)
+        messages = get_messages(room_id)
+        return render_template('view_room.html', username=current_user.username, room=room, room_members=room_members,messages=messages)
+    else:
+        return "Room not found", 404
+
         
 @socketio.on('send_message')
 def handle_send_message_event(data):
     app.logger.info("{} has sent message to the room {}:{}".format(data['username'], data['room'],data['message']))  
     
+    data['created_at'] = datetime.now().strftime("%d %b, %H:%M")
+    save_message(data['room'], data['message'], data['username'])
     socketio.emit('receive_message',data,room=data['room'])    
 
 
